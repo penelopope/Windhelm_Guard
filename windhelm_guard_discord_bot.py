@@ -10,6 +10,9 @@ import datetime
 from groq import Groq
 from aiohttp import web
 from logger import DashboardLogger
+# Base Workspace Directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Graceful shutdown handling (Render sends SIGTERM on restart)
 import signal
 
@@ -36,9 +39,6 @@ except ImportError:
     print("Error: 'discord.py' package is not installed. Please install it using:", file=sys.stderr)
     print("pip3 install discord.py --break-system-packages", file=sys.stderr)
     sys.exit(1)
-
-# Base Workspace Directory
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def load_env():
     env_file = os.path.join(SCRIPT_DIR, ".env")
