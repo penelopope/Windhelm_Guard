@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Environment variables
+.env
+.env*.local
+
+# Dynamic state data
+channel_styles.json
+friends.json
+critical_members.json
+channel_conflict_state.json
+convo_data.txt
+members.db
+
+# Custom Data & Logs
+persona/
+DMs/
+logs/
+test_groq_vision.py
