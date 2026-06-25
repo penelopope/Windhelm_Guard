@@ -362,6 +362,9 @@ class WindhelmGuardDiscordClient(discord.Client):
         self.dashboard_started = False
         self.invites = {}
         self.init_db()
+        # Ensure essential JSON files exist with default structures
+        self.ensure_json_files()
+
 
     def init_db(self):
         db_path = os.path.join(SCRIPT_DIR, "members.db")
@@ -391,6 +394,11 @@ class WindhelmGuardDiscordClient(discord.Client):
                 )
             """)
             conn.commit()
+            # Ensure auxiliary JSON files exist
+            self._ensure_file("channel_styles.json", default={})
+            self._ensure_file("channel_conflict_state.json", default={})
+            self._ensure_file("friends.json", default=[])
+            self._ensure_file("random_comment_state.json", default={"last_comment_time": 0.0})
             
             # Check if we should migrate from critical_members.json
             c.execute("SELECT COUNT(*) FROM users")
@@ -545,6 +553,24 @@ class WindhelmGuardDiscordClient(discord.Client):
                 json.dump(state, f)
         except Exception as e:
             print(f"Error writing random_comment_state.json: {e}", file=sys.stderr)
+
+    def _ensure_file(self, filename, default):
+        """Create a JSON file with a default value if it does not exist."""
+        path = os.path.join(SCRIPT_DIR, filename)
+        if not os.path.exists(path):
+            try:
+                with open(path, "w") as f:
+                    json.dump(default, f, indent=4)
+                print(f"Created missing {filename} with default content.")
+            except Exception as e:
+                print(f"Error creating {filename}: {e}", file=sys.stderr)
+
+    def ensure_json_files(self):
+        """Public method to ensure all required JSON configuration files exist."""
+        self._ensure_file("channel_styles.json", default={})
+        self._ensure_file("channel_conflict_state.json", default={})
+        self._ensure_file("friends.json", default=[])
+        self._ensure_file("random_comment_state.json", default={"last_comment_time": 0.0})
 
     async def generate_fun_comment(self, channel, history_str, style_guidelines, lingo):
         prompt = f"""You are a City Guard from Skyrim, but you are also a casual participant in this Discord server.
