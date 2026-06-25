@@ -1131,9 +1131,12 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         else:
             await message.reply("I have checked the registry for that citizen and delivered the records securely to the Jarl's steward.")
             if MOD_CHANNEL_ID:
-                mod_channel = self.get_channel(int(MOD_CHANNEL_ID))
-                if mod_channel:
-                    await mod_channel.send(embed=embed)
+                try:
+                    mod_channel = self.get_channel(int(MOD_CHANNEL_ID))
+                    if mod_channel:
+                        await mod_channel.send(embed=embed)
+                except Exception as e:
+                    print(f"Error sending profile report to mod channel: {e}", file=sys.stderr)
 
     async def log_to_mod_channel(self, embed):
         MOD_CHANNEL_ID = os.environ.get("MOD_CHANNEL_ID", "")
@@ -2009,7 +2012,10 @@ Analyze the TARGET MESSAGE content and the sender's intent. Do not attribute any
                     else:
                         for uid, data in members.items():
                             report += f"- **{data['name']}**: Cumulative Toxicity Score: {data['toxicity_score']}, Offenses: {data.get('total_offenses', len(data.get('offenses', [])))}\n"
-                    await mod_channel.send(report)
+                    try:
+                        await mod_channel.send(report)
+                    except Exception as e:
+                        print(f"Error sending intelligence summary report: {e}", file=sys.stderr)
                 
                 # Make sure the bot acknowledges it publicly if asked publicly
                 if str(message.channel.id) != MOD_CHANNEL_ID:
@@ -2279,7 +2285,10 @@ Analyze the TARGET MESSAGE content and the sender's intent. Do not attribute any
                     embed.add_field(name="Action Link", value=f"[Jump to Message]({message.jump_url})", inline=False)
                     embed.set_footer(text=f"User ID: {author_id}")
                     
-                    await mod_channel.send(embed=embed)
+                    try:
+                        await mod_channel.send(embed=embed)
+                    except Exception as e:
+                        print(f"Error sending mod channel alert: {e}", file=sys.stderr)
 
             if is_mentioned and not command_processed:
                 should_intervene = True
@@ -2307,7 +2316,7 @@ Analyze the TARGET MESSAGE content and the sender's intent. Do not attribute any
                     self.last_global_reply = time.time()
                 
                 await message.reply(public_reply)
-        return
+            return
                 
         except Exception as e:
             print(f"Error in Discord response generation: {e}", file=sys.stderr)
