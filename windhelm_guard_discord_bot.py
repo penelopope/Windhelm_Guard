@@ -10,7 +10,26 @@ import datetime
 from groq import Groq
 from aiohttp import web
 from logger import DashboardLogger
+# Graceful shutdown handling (Render sends SIGTERM on restart)
+import signal
 
+LOCK_PATH = os.path.join(SCRIPT_DIR, "bot.lock")
+if os.path.exists(LOCK_PATH):
+    print("[🚫] Another bot instance is already running – exiting.")
+    sys.exit(0)
+# Create lock file for this process
+open(LOCK_PATH, "w").close()
+
+def _handle_shutdown(signum, frame):
+    print("[⚡] Received shutdown signal, cleaning up…")
+    try:
+        os.remove(LOCK_PATH)
+    except Exception:
+        pass
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, _handle_shutdown)
+signal.signal(signal.SIGINT, _handle_shutdown)  # also handle Ctrl‑C locally
 try:
     import discord
 except ImportError:
@@ -2288,6 +2307,7 @@ Analyze the TARGET MESSAGE content and the sender's intent. Do not attribute any
                     self.last_global_reply = time.time()
                 
                 await message.reply(public_reply)
+        return
                 
         except Exception as e:
             print(f"Error in Discord response generation: {e}", file=sys.stderr)
