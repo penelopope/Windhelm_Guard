@@ -592,30 +592,8 @@ class WindhelmGuardDiscordClient(discord.Client):
         self._ensure_file("random_comment_state.json", default={"last_comment_time": 0.0})
 
     async def generate_fun_comment(self, channel, history_str, style_guidelines, lingo):
-        prompt = f"""You are a City Guard from Skyrim, but you are also a casual participant in this Discord server.
-The current conversation is casual and friendly.
-You want to jump in with a rare, funny, and lighthearted comment.
-Blend Skyrim guard lore with real-world/Indian culture or modern slang (e.g. "In Skyrim we have mead that we throw on each other in holi, bruh"). Keep it casual, matching the channel style if possible.
-
-Channel style guidelines:
-{style_guidelines}
-{lingo}
-
-Recent chat history:
-{history_str}
-
-Respond with a single line containing only your fun comment. Do not use quotes or prefixes.
-"""
-        try:
-            content = await llm_balancer.generate_chat_completion(
-                "You are a casual Skyrim Guard participant. Output only the message text.",
-                prompt,
-                response_json=False
-            )
-            return content.strip().strip('"')
-        except Exception as e:
-            print(f"Error generating fun comment: {e}", file=sys.stderr)
-            return None
+        # Stub: fun comments disabled
+        return None
 
     async def resolve_member(self, guild, target_str):
         if not guild or not target_str:
@@ -662,7 +640,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
                     break
                     
         if not is_authorized:
-            await message.reply("Wait... I know you. You do not have the authority to command the Jarl's guards. Move along, citizen.")
+            await message.reply("You do not have the authorization to run moderator commands. This attempt has been logged.")
             return
 
         if cmd == "timeout":
@@ -698,7 +676,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
             return
         member = await self.resolve_member(guild, target)
         if not member:
-            await message.reply(f"I could not find the citizen '{target}' in the registry.")
+            await message.reply(f"I could not find the user '{target}' in the moderator registry.")
             return
         
         duration_mins = args.get("duration_mins")
@@ -707,31 +685,31 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         except (ValueError, TypeError):
             duration_mins = 10
             
-        reason = args.get("reason") or "Lollygagging"
+        reason = args.get("reason") or "Rule violation"
         try:
             duration = datetime.timedelta(minutes=duration_mins)
             await member.timeout(duration, reason=reason)
             await message.channel.send(
-                f"By order of the Jarl, {member.mention} has been cast into the dungeon (timed out) for {duration_mins} minutes. Reason: {reason}."
+                f"{member.mention} has been timed out for {duration_mins} minutes. Reason: {reason}."
             )
         except Exception as e:
-            await message.channel.send(f"I tried to lock up {member.display_name}, but the lock is rusted (error: {e}).")
+            await message.channel.send(f"Failed to timeout {member.display_name}: {e}")
 
     async def cmd_untimeout(self, message, target, args):
         guild = message.guild
         if not guild:
             return
         if not target:
-            await message.reply("Who is it you wish to pardon? State their name clearly.")
+            await message.reply("Who is it you wish to remove the timeout for? State their name clearly.")
             return
         member = await self.resolve_member(guild, target)
         if not member:
-            await message.reply(f"I could not find the citizen '{target}' in the registry.")
+            await message.reply(f"I could not find the user '{target}' in the moderator registry.")
             return
-        reason = args.get("reason") or "Pardoned by the Jarl"
+        reason = args.get("reason") or "Timeout removed by moderator"
         try:
             await member.timeout(None, reason=reason)
-            await message.channel.send(f"The Jarl has pardoned {member.mention}. Their timeout is removed.")
+            await message.channel.send(f"The timeout for {member.mention} has been removed.")
         except Exception as e:
             await message.channel.send(f"Failed to remove timeout from {member.display_name}: {e}")
 
@@ -744,12 +722,12 @@ Respond with a single line containing only your fun comment. Do not use quotes o
             return
         member = await self.resolve_member(guild, target)
         if not member:
-            await message.reply(f"I could not find the citizen '{target}' in the registry.")
+            await message.reply(f"I could not find the user '{target}' in the moderator registry.")
             return
-        reason = args.get("reason") or "Exiled from Windhelm"
+        reason = args.get("reason") or "Kicked by moderator"
         try:
             await member.kick(reason=reason)
-            await message.channel.send(f"By order of the Jarl, {member.display_name} has been kicked from the server. Reason: {reason}.")
+            await message.channel.send(f"{member.display_name} has been kicked from the server. Reason: {reason}.")
         except Exception as e:
             await message.channel.send(f"Failed to kick {member.display_name}: {e}")
 
@@ -772,7 +750,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         if not user_to_ban:
             await message.reply(f"I could not resolve '{target}' to a user.")
             return
-        reason = args.get("reason") or "High treason against the Jarl"
+        reason = args.get("reason") or "Banned by moderator"
         try:
             await guild.ban(user_to_ban, reason=reason, delete_message_days=0)
             await message.channel.send(f"🔨 {user_to_ban.name} has been permanently banned from the server. Reason: {reason}.")
@@ -810,7 +788,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
                     pass
                     
         if not banned_user:
-            await message.reply(f"I could not find a banned citizen matching '{target}'.")
+            await message.reply(f"I could not find a banned user matching '{target}'.")
             return
             
         reason = args.get("reason") or "Unbanned by request"
@@ -854,10 +832,10 @@ Respond with a single line containing only your fun comment. Do not use quotes o
                 if chan:
                     channel = chan
                     
-        reason = args.get("reason") or "Under guard lockdown"
+        reason = args.get("reason") or "Channel lockdown"
         try:
             await channel.set_permissions(guild.default_role, send_messages=False, reason=reason)
-            await channel.send(f"🔒 **This channel is now locked by order of the Jarl.** Reason: {reason}")
+            await channel.send(f"🔒 **This channel is now locked by moderator order.** Reason: {reason}")
         except Exception as e:
             await message.reply(f"Failed to lock channel: {e}")
 
@@ -913,7 +891,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
             return
         member = await self.resolve_member(guild, target)
         if not member:
-            await message.reply(f"I could not find the citizen '{target}' in the registry.")
+            await message.reply(f"I could not find the user '{target}' in the moderator registry.")
             return
             
         reason = args.get("reason") or "Disorderly conduct"
@@ -940,7 +918,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         fd["offenses"].append({
             "timestamp": timestamp_str,
             "toxicity_level": 50,
-            "reason": f"[Jarl Warn] {reason}",
+            "reason": f"[Mod Warn] {reason}",
             "message": message.clean_content
         })
         fd["total_offenses"] = len(fd["offenses"])
@@ -955,11 +933,11 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         if not guild:
             return
         if not target:
-            await message.reply("Who is it you wish to pardon/reset? State their name clearly.")
+            await message.reply("Who is it you wish to reset? State their name clearly.")
             return
         member = await self.resolve_member(guild, target)
         if not member:
-            await message.reply(f"I could not find the citizen '{target}' in the registry.")
+            await message.reply(f"I could not find the user '{target}' in the moderator registry.")
             return
             
         members = self.load_critical_members()
@@ -973,9 +951,9 @@ Respond with a single line containing only your fun comment. Do not use quotes o
             fd["total_offenses"] = 0
             members[uid] = fd
             self.save_critical_members(members)
-            await message.channel.send(f"🕊️ The registry for {member.mention} has been cleared. Their toxicity score is reset to 0.0 and past offenses have been pardoned.")
+            await message.channel.send(f"🕊️ The registry for {member.mention} has been cleared. Their toxicity score is reset to 0.0 and past offenses have been cleared.")
         else:
-            await message.channel.send(f"🕊️ {member.mention} has no record of offenses in the Jarl's registry. They are already clean.")
+            await message.channel.send(f"🕊️ {member.mention} has no record of offenses in the moderator registry. They are already clean.")
 
     async def handle_reminder(self, message, result):
         delay = result.get("reminder_delay_seconds")
@@ -1038,7 +1016,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
                     break
 
         if not is_authorized:
-            await message.reply("Wait... I know you. You do not have permission to view the Jarl's registry.")
+            await message.reply("You do not have permission to view the moderator registry.")
             return
 
         # Locate target user ID
@@ -1129,7 +1107,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         if is_mod_channel_or_dm:
             await message.reply(embed=embed)
         else:
-            await message.reply("I have checked the registry for that citizen and delivered the records securely to the Jarl's steward.")
+            await message.reply("I have checked the registry for that user and sent the report to the moderators.")
             if MOD_CHANNEL_ID:
                 try:
                     mod_channel = self.get_channel(int(MOD_CHANNEL_ID))
@@ -1196,19 +1174,8 @@ Respond with a single line containing only your fun comment. Do not use quotes o
             print(f"Error sending threshold mod summary: {e}", file=sys.stderr)
 
     async def on_message_delete(self, message):
-        if message.author.bot:
-            return
-        if ALLOWED_GUILDS and message.guild and message.guild.id not in ALLOWED_GUILDS:
-            return
-        embed = discord.Embed(
-            title="🗑️ Message Deleted",
-            color=discord.Color.red(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        embed.add_field(name="Author", value=f"{message.author.mention} ({message.author.id})", inline=True)
-        embed.add_field(name="Channel", value=message.channel.mention if hasattr(message.channel, "mention") else str(message.channel), inline=True)
-        embed.add_field(name="Content", value=message.content[:1024] or "[No text content]", inline=False)
-        await self.log_to_server_log_channel(embed)
+        # Deleted message logging disabled per user request
+        return
 
     # async def on_message_edit(self, before, after):
     #     if before.author.bot:
@@ -1230,53 +1197,12 @@ Respond with a single line containing only your fun comment. Do not use quotes o
     #     await self.log_to_server_log_channel(embed)
 
     async def on_voice_state_update(self, member, before, after):
-        if ALLOWED_GUILDS and member.guild and member.guild.id not in ALLOWED_GUILDS:
-            return
-        if member.bot:
-            return
-        if before.channel == after.channel:
-            return
-        
-        embed = discord.Embed(
-            color=discord.Color.blue(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        embed.add_field(name="User", value=f"{member.mention} ({member.id})", inline=True)
-        
-        if before.channel is None and after.channel is not None:
-            embed.title = "🔊 Voice Joined"
-            embed.add_field(name="Channel", value=after.channel.name, inline=True)
-        elif before.channel is not None and after.channel is None:
-            embed.title = "🔇 Voice Left"
-            embed.add_field(name="Channel", value=before.channel.name, inline=True)
-        elif before.channel is not None and after.channel is not None:
-            embed.title = "🔁 Voice Moved"
-            embed.add_field(name="Old Channel", value=before.channel.name, inline=True)
-            embed.add_field(name="New Channel", value=after.channel.name, inline=True)
-        
-        await self.log_to_server_log_channel(embed)
+        # Voice logging disabled per user request
+        return
 
     async def on_user_update(self, before, after):
-        if after.bot:
-            return
-        embed = discord.Embed(
-            title="👤 User Profile Updated",
-            color=discord.Color.teal(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        embed.add_field(name="User", value=f"{after.mention} ({after.id})", inline=False)
-        
-        changed = False
-        if before.name != after.name:
-            embed.add_field(name="Old Username", value=before.name, inline=True)
-            embed.add_field(name="New Username", value=after.name, inline=True)
-            changed = True
-        if before.avatar != after.avatar:
-            embed.add_field(name="Avatar Changed", value="User updated their profile picture.", inline=False)
-            changed = True
-            
-        if changed:
-            await self.log_to_server_log_channel(embed)
+        # User updates logging disabled per user request
+        return
 
     async def on_member_update(self, before, after):
         if ALLOWED_GUILDS and before.guild and before.guild.id not in ALLOWED_GUILDS:
@@ -1291,10 +1217,6 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         embed.add_field(name="Member", value=f"{after.mention} ({after.id})", inline=False)
         
         changed = False
-        if before.nick != after.nick:
-            embed.add_field(name="Old Nickname", value=str(before.nick), inline=True)
-            embed.add_field(name="New Nickname", value=str(after.nick), inline=True)
-            changed = True
             
         if before.roles != after.roles:
             old_role_names = [r.name for r in before.roles]
@@ -1378,27 +1300,9 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         if member.bot:
             return
         
-        inviter, invite = await self.track_invite_used(member)
-        
-        embed = discord.Embed(
-            title="📥 Citizen Entered the Hold (Member Joined)",
-            color=discord.Color.green(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        embed.set_thumbnail(url=member.display_avatar.url if member.avatar else None)
-        embed.add_field(name="User", value=f"{member.mention} ({member.name})", inline=True)
-        embed.add_field(name="User ID", value=member.id, inline=True)
-        
-        created_days = (datetime.datetime.now(datetime.timezone.utc) - member.created_at).days
-        embed.add_field(name="Account Age", value=f"{created_days} days ago (Created: {member.created_at.strftime('%Y-%m-%d')})", inline=False)
-        
-        if inviter:
-            embed.add_field(name="Invited By", value=f"{inviter.mention} ({inviter.name})", inline=True)
-            embed.add_field(name="Invite Code", value=f"`{invite.code}` (Uses: {invite.uses})", inline=True)
-        else:
-            embed.add_field(name="Invited By", value="Unknown (Vanished into the wind / Vanity URL)", inline=False)
-            
-        await self.log_to_server_log_channel(embed)
+        # Track invites internally
+        await self.track_invite_used(member)
+        # Join logs disabled per user request
 
     async def on_member_remove(self, member):
         if ALLOWED_GUILDS and member.guild.id not in ALLOWED_GUILDS:
@@ -1406,19 +1310,38 @@ Respond with a single line containing only your fun comment. Do not use quotes o
         if member.bot:
             return
         
+        # Check if it was a kick
+        is_kick = False
+        kicker = "Unknown"
+        reason = "No reason provided"
+        try:
+            # Look back in audit logs for a kick
+            async for entry in member.guild.audit_logs(limit=5, action=discord.AuditLogAction.kick):
+                if entry.target.id == member.id:
+                    now = datetime.datetime.now(datetime.timezone.utc)
+                    if (now - entry.created_at).total_seconds() < 10:
+                        is_kick = True
+                        kicker = f"{entry.user.mention} ({entry.user.name} / ID: {entry.user.id})"
+                        if entry.reason:
+                            reason = entry.reason
+                        break
+        except Exception:
+            pass
+            
+        if not is_kick:
+            # Only log kicks per user request
+            return
+            
         embed = discord.Embed(
-            title="📤 Citizen Left the Hold (Member Left)",
-            color=discord.Color.light_grey(),
+            title="👢 Member Kicked",
+            color=discord.Color.orange(),
             timestamp=datetime.datetime.now(datetime.timezone.utc)
         )
         embed.set_thumbnail(url=member.display_avatar.url if member.avatar else None)
-        embed.add_field(name="User", value=f"{member.mention} ({member.name})", inline=True)
-        embed.add_field(name="User ID", value=member.id, inline=True)
+        embed.add_field(name="User", value=f"{member.mention} ({member.name} / ID: {member.id})", inline=False)
+        embed.add_field(name="Kicked By", value=kicker, inline=True)
+        embed.add_field(name="Reason", value=reason, inline=True)
         
-        if member.joined_at:
-            stay_days = (datetime.datetime.now(datetime.timezone.utc) - member.joined_at).days
-            embed.add_field(name="Stay Duration", value=f"{stay_days} days (Joined: {member.joined_at.strftime('%Y-%m-%d')})", inline=False)
-            
         await self.log_to_server_log_channel(embed)
 
     async def on_member_ban(self, guild, user):
@@ -1489,20 +1412,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
                 self.invites[guild_id] = await invite.guild.invites()
             except Exception as e:
                 print(f"Failed to refresh invites cache on invite create: {e}")
-
-        embed = discord.Embed(
-            title="✉️ Invite Link Created",
-            color=discord.Color.dark_teal(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        embed.add_field(name="Creator", value=f"{invite.inviter.mention if invite.inviter else 'System'} ({invite.inviter.name if invite.inviter else ''})", inline=True)
-        embed.add_field(name="Invite Link", value=invite.url, inline=True)
-        embed.add_field(name="Code", value=f"`{invite.code}`", inline=True)
-        embed.add_field(name="Channel", value=invite.channel.mention if hasattr(invite.channel, "mention") else str(invite.channel), inline=True)
-        embed.add_field(name="Max Uses", value=str(invite.max_uses) if invite.max_uses else "Infinite", inline=True)
-        embed.add_field(name="Max Age", value=f"{invite.max_age} seconds" if invite.max_age else "Infinite", inline=True)
-        
-        await self.log_to_server_log_channel(embed)
+        # Invite log disabled per user request
 
     async def on_invite_delete(self, invite):
         if ALLOWED_GUILDS and invite.guild.id not in ALLOWED_GUILDS:
@@ -1514,16 +1424,7 @@ Respond with a single line containing only your fun comment. Do not use quotes o
                 self.invites[guild_id] = await invite.guild.invites()
             except Exception as e:
                 print(f"Failed to refresh invites cache on invite delete: {e}")
-
-        embed = discord.Embed(
-            title="✉️ Invite Link Deleted",
-            color=discord.Color.dark_red(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        embed.add_field(name="Code", value=f"`{invite.code}`", inline=True)
-        embed.add_field(name="Channel", value=invite.channel.mention if hasattr(invite.channel, "mention") else str(invite.channel), inline=True)
-        
-        await self.log_to_server_log_channel(embed)
+        # Invite log disabled per user request
 
     async def analyze_channel_style(self, channel):
         if isinstance(channel, discord.DMChannel):
@@ -1654,18 +1555,18 @@ Respond with a single line containing only your fun comment. Do not use quotes o
     async def generate_image_response(self, context, image_description, response_type, channel_style_guidelines, channel_lingo):
         if response_type == "concern":
             instruction = (
-                "You noticed that a citizen posted an image that depicts a very harsh or depressing situation, indicating they might be going through a hard time.\n"
-                "Even though you are a rugged city guard, you have a soft spot and want to show genuine concern for this citizen.\n"
-                "Write a public reply in your Skyrim Guard persona (refer to sweetrolls, taking an arrow to the knee, mead, the Jarl, dragons, or guard duty, but express concern and offer support)."
+                "You noticed that a user posted an image that depicts a very harsh or depressing situation, indicating they might be going through a hard time.\n"
+                "As a server moderator, you want to show genuine concern and offer support to this member.\n"
+                "Write a public reply in your Moderator persona, expressing concern and offering support."
             )
         else:
             instruction = (
-                "You noticed that a citizen posted an image that goes against community rules (contains NSFW, nudity, gore, or other prohibited content in a channel not marked for NSFW).\n"
-                "Write a public warning reply in your Skyrim Guard persona (tell them to halt, keep their hands to themselves, no lollygagging, or that the Jarl's dungeon/guards await if they continue to break rules)."
+                "You noticed that a user posted an image that goes against community rules (contains NSFW, nudity, gore, or other prohibited content in a channel not marked for NSFW).\n"
+                "Write a public warning reply in your Moderator persona (inform them that their post violates rules and warning them to keep it safe and compliant, or action may be taken)."
             )
 
-        system_prompt = f"""You are a City Guard from The Elder Scrolls V: Skyrim.
-Your objective is to reply to a citizen's message in the channel.
+        system_prompt = f"""You are a Server Moderator bot.
+Your objective is to reply to a user's message in the channel when there is a potential issue.
 {instruction}
 
 Make sure to match the channel style guidelines and lingo if possible:
@@ -1673,7 +1574,7 @@ CHANNEL STYLE GUIDELINES:
 {channel_style_guidelines}
 {channel_lingo}
 
-Write a short, natural reply (usually 1-2 short sentences, matching the channel style guidelines). Speak in the first person as the Windhelm Guard. Do not use markdown blocks or say things like 'Guard:' prefix. Just output the reply text.
+Write a short, natural reply (usually 1-2 short sentences, matching the channel style guidelines). Speak in the first person as the Moderator. Do not use markdown blocks or say things like 'Moderator:' prefix. Just output the reply text.
 """
         user_prompt = f"""CONVERSATION CONTEXT:
 {context}
@@ -1685,7 +1586,7 @@ IMAGE IN TARGET MESSAGE DESCRIPTION:
             return await llm_balancer.generate_chat_completion(system_prompt, user_prompt)
         except Exception as e:
             print(f"Error generating image response: {e}", file=sys.stderr)
-            return "Keep your hands to yourself, sneak thief."
+            return "Please keep the chat compliant with community guidelines."
 
     @staticmethod
     def format_discord_message(msg):
@@ -1739,8 +1640,12 @@ IMAGE IN TARGET MESSAGE DESCRIPTION:
             return
 
         clean_text = message.clean_content.strip()
-        is_guard_alias = clean_text.lower().startswith("guard ") or clean_text.lower() == "guard"
-        is_mentioned = (self.user in message.mentions and not message.mention_everyone) or is_guard_alias
+        is_bot_alias = (
+            clean_text.lower().startswith("guard ") or clean_text.lower() == "guard" or
+            clean_text.lower().startswith("moderator ") or clean_text.lower() == "moderator" or
+            clean_text.lower().startswith("bot ") or clean_text.lower() == "bot"
+        )
+        is_mentioned = (self.user in message.mentions and not message.mention_everyone) or is_bot_alias
         OWNER_ID = os.environ.get("OWNER_ID", "").strip()
         is_owner = OWNER_ID and str(message.author.id) == OWNER_ID
 
@@ -1854,9 +1759,9 @@ IMAGE IN TARGET MESSAGE DESCRIPTION:
                         current_msg_images += f"\n[Image '{a.filename}' Content: {desc}. Analysis: {explanation}]"
 
         rules = get_rules()
-        system_prompt = f"""You are a City Guard from The Elder Scrolls V: Skyrim.
+        system_prompt = f"""You are a Discord Server Moderator.
 Your objective is to silently observe the conversation, analyze toxicity against community rules, and protect the server.
-You must blend your Skyrim Guard persona (arrow to the knee, stolen sweetroll, lollygagging, the Jarl, dragons) with the channel's communication style (casual, lowercase, internet slang). You are a "chronically online" Skyrim Guard.
+You speak in a firm, objective, and professional Moderator persona, adapted to the channel's communication style (usually casual, lowercase, internet slang).
 
 COMMUNITY RULES (rules.txt):
 {rules}
@@ -1872,8 +1777,7 @@ MODERATION CRITERIA:
 - CONTEXT ISOLATION: Evaluate ONLY the content and intent of the latest message (the last line of history). Do NOT associate toxic words or insults from previous messages (by other users) to the current author. For example, if User A said something toxic earlier, and User B now says "hi" or "whats my score", User B's message must be classified as "none" with toxicity score 0.
 - Evaluate ONLY the latest message (the last line of history) for toxicity, arguments, or commands. Do not re-evaluate or execute past commands in the history.
 - Only genuine harassment, severe insults, hate speech, slurs, doxxing, or destructive arguing should be flagged as high toxicity (95+) and warrant intervention or mod reporting.
-- INTERACTIVE CHAT MODE: If IS_BEING_ADDRESSED is True, you are being addressed/mentioned! You MUST set "should_intervene_publicly" to true and write a creative, natural conversational response in "public_reply". Speak directly and exactly like a City Guard from Skyrim speaking to a citizen (mention mead, sweetrolls, dragons, taking an arrow to the knee, Jarl, etc.) adapted to the channel's communication style (usually casual, lower-case). Do NOT remain silent, do NOT leave "public_reply" empty, and do NOT just say "No lollygagging" unless it uniquely fits the context.
-- SILENT MODE: If you are NOT mentioned or addressed (IS_BEING_ADDRESSED is False), you must strictly stay silent (set "should_intervene_publicly" to false) unless a severe rule violation (toxicity 95+) is occurring.
+- SILENT MODE: You must strictly stay silent (set "should_intervene_publicly" to false) unless a severe rule violation (toxicity 90+) or threshold crossing is occurring. Do NOT engage in casual chit-chat, answers to questions, or general conversations even if you are mentioned or addressed. Friendly conversations must be ignored.
 
 OFFENSE CLASSIFICATION:
 You must classify the message into one of three classifications in "offense_classification":
@@ -1887,17 +1791,17 @@ You must perform intent and recipient reaction analysis in "intent_analysis":
 - State your reasoning for the offense classification in "offense_reason".
 
 NATURAL LANGUAGE COMMANDS:
-- Reminders: If a user asks you to remind them of something (e.g. "@Windhelm Guard remind me in 5 minutes to study"), set:
+- Reminders: If a user asks you to remind them of something, set:
   - "set_reminder" to true
-  - "reminder_delay_seconds" to the delay in seconds (e.g., 300)
-  - "reminder_text" to the reminder content (e.g., "study")
-- Profile Lookup: If a user asks to see/check/show the profile of a user (e.g. "@Windhelm Guard show profile of @User"), set:
+  - "reminder_delay_seconds" to the delay in seconds
+  - "reminder_text" to the reminder content
+- Profile Lookup: If a user asks to see/check/show the profile of a user, set:
   - "is_requesting_profile" to true
   - "profile_target_user" to the username or mention of the target user.
 - Summaries & Judgements:
   - If asked for a summary/log, set "is_requesting_summary" to true.
   - If asked to judge a user/situation, set "is_requesting_judgement" to true.
-  - For judgements/summaries, do NOT leak real mod details/names publicly. Keep the public reply anonymous and Skyrim-themed, and put details in "mod_report_reason".
+  - For judgements/summaries, do NOT leak real mod details/names publicly. Keep the public reply anonymous and professional, and put details in "mod_report_reason".
 - Moderation Commands: If the message asks you to execute a moderator action (such as timeout, untimeout, kick, ban, unban, clear, lock, unlock, slowmode, warn, or resetting/pardoning/clearing a user's toxicity record), you MUST extract the action and targets:
   - "command_to_execute": set to "timeout", "untimeout", "kick", "ban", "unban", "clear", "lock", "unlock", "slowmode", "warn", "reset_toxicity", or "none"
   - "command_target": the name, mention, ID of the user or channel target
@@ -1914,8 +1818,8 @@ Current Context:
 Your task:
 1. Review the conversation history.
 2. Evaluate the last message and overall context for rule violations, commands, or mentions.
-3. If should_intervene_publicly is true, write a reply in "public_reply" in your Skyrim Guard persona.
-4. If IS_BEING_ADDRESSED is True, you MUST set "should_intervene_publicly" to true and write a creative, natural conversational response in "public_reply" matching your Skyrim Guard persona. Speak directly as the Windhelm Guard himself talking directly to the citizen. Do not speak in third person about guards, and avoid repeating "No lollygagging" unless it uniquely fits the conversation context.
+3. If should_intervene_publicly is true, write a reply in "public_reply" in your Moderator persona.
+4. If a severe violation or conflict is occurring, you may set "should_intervene_publicly" to true and write a firm, professional warning in "public_reply". Otherwise, keep "should_intervene_publicly" as false. Do not engage in casual chit-chat under any circumstances.
 5. If should_report_to_mods is true, write the reason in "mod_report_reason".
 
 You MUST respond ONLY with a JSON object matching this schema:
@@ -1953,7 +1857,7 @@ You MUST respond ONLY with a JSON object matching this schema:
 TARGET MESSAGE TO ANALYZE (Evaluate ONLY this message for toxicity and commands):
 Sender: {message.author.display_name} (ID: {message.author.id})
 Message Content: {message.clean_content}
-IS_BEING_ADDRESSED (Bot was mentioned or addressed as 'guard'): {is_mentioned}
+IS_BEING_ADDRESSED (Bot was mentioned or addressed): {is_mentioned}
 ==================================================
 
 Analyze the TARGET MESSAGE content and the sender's intent. Do not attribute any text, toxicity, or commands from the CONVERSATION CONTEXT to this sender. If the target message itself does not violate rules, toxicity must be 0 and offense_classification must be "none".
@@ -2242,12 +2146,12 @@ Analyze the TARGET MESSAGE content and the sender's intent. Do not attribute any
             if new_score >= 95.0 and fd["last_warned_threshold"] < 95:
                 crossed_threshold = 95
                 should_intervene = True
-                public_reply = f"Enough of this insolence, {message.author.mention}! You've been warned before, and now you're playing with fire. The Jarl's guards are ready to haul you away. Behave, or else."
+                public_reply = f"Attention {message.author.mention}: Your toxicity level has crossed critical thresholds. This is a final warning. Please adjust your tone immediately to avoid further moderator action."
                 fd["last_warned_threshold"] = 95
             elif new_score >= 90.0 and new_score < 95.0 and fd["last_warned_threshold"] < 90:
                 crossed_threshold = 90
                 should_intervene = True
-                public_reply = f"Halt right there, {message.author.mention}! Your behavior in this hold is pushing the boundaries of the Jarl's patience. Keep it civil, or you'll find yourself in the Dragonsreach dungeon."
+                public_reply = f"Notice {message.author.mention}: Your behavior has flagged multiple warnings in our toxicity tracking. Please keep your communication respectful and civil."
                 fd["last_warned_threshold"] = 90
                 
             # Save updated profile
@@ -2290,24 +2194,17 @@ Analyze the TARGET MESSAGE content and the sender's intent. Do not attribute any
                     except Exception as e:
                         print(f"Error sending mod channel alert: {e}", file=sys.stderr)
 
-            if is_mentioned and not command_processed:
-                should_intervene = True
-                if not public_reply:
-                    GUARD_QUOTES = [
-                        "I used to be an adventurer like you. Then I took an arrow in the knee...",
-                        "Let me guess. Someone stole your sweetroll?",
-                        "No lollygagging.",
-                        "Disrespect the law, and you disrespect me.",
-                        "What is it? Dragons?",
-                        "Watch the skies, traveler.",
-                        "Got to thinking, maybe I'm the Dragonborn, and I just don't know it yet?",
-                        "My cousin's out fighting dragons, and what do I get? Guard duty.",
-                        "Wait... I know you.",
-                        "Hands to yourself, sneak thief.",
-                        "Citizen.",
-                        "Fear not, for the guards of Windhelm are ever vigilant."
-                    ]
-                    public_reply = random.choice(GUARD_QUOTES)
+            # Enforce silence for general chat: only intervene if a critical situation occurs (conflict, rule break, or warning threshold crossed)
+            is_critical = (
+                chan_state["is_conflict_active"] or 
+                toxicity_level >= 90 or 
+                offense_classification in ["direct_rule_break", "disrespectful"] or
+                crossed_threshold is not None
+            )
+            
+            if not is_critical and not command_processed:
+                should_intervene = False
+                public_reply = ""
 
             # Public De-escalation or Reply
             if should_intervene and public_reply:
@@ -2321,7 +2218,7 @@ Analyze the TARGET MESSAGE content and the sender's intent. Do not attribute any
         except Exception as e:
             print(f"Error in Discord response generation: {e}", file=sys.stderr)
             if is_dm or is_mentioned:
-                await message.channel.send("Focus and consistency are the keys to mastery.")
+                await message.channel.send("An error occurred while processing the request.")
 
 def main():
     token = os.environ.get("DISCORD_TOKEN")
@@ -2329,7 +2226,7 @@ def main():
         print("Error: DISCORD_TOKEN environment variable is not set.", file=sys.stderr)
         sys.exit(1)
 
-    print("Initializing Standalone Windhelm Guard Discord Bot...")
+    print("Initializing Standalone Moderator Discord Bot...")
     
     intents = discord.Intents.default()
     intents.message_content = True
