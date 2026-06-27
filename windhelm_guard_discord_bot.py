@@ -643,7 +643,7 @@ class WindhelmGuardDiscordClient(discord.Client):
             await message.reply("You do not have the authorization to run moderator commands. This attempt has been logged.")
             return
 
-        if cmd == "timeout":
+        if cmd == "timeout" or cmd == "mute":
             await self.cmd_timeout(message, target, args)
         elif cmd == "untimeout":
             await self.cmd_untimeout(message, target, args)
@@ -978,6 +978,12 @@ class WindhelmGuardDiscordClient(discord.Client):
                 print(f"Failed to send reminder: {e}")
 
         asyncio.create_task(run_reminder(delay_secs, remind_content, channel, author_mention))
+        
+        # Confirm reminder setting publicly
+        try:
+            await message.reply(f"I will remind you about '{remind_content}' in {delay_secs} seconds.")
+        except Exception as e:
+            print(f"Failed to send reminder confirmation: {e}")
 
     def load_conflict_state(self):
         state_file = os.path.join(SCRIPT_DIR, "channel_conflict_state.json")
@@ -1649,11 +1655,18 @@ IMAGE IN TARGET MESSAGE DESCRIPTION:
         OWNER_ID = os.environ.get("OWNER_ID", "").strip()
         is_owner = OWNER_ID and str(message.author.id) == OWNER_ID
 
+        is_moderator = is_owner
+        if not is_moderator and hasattr(message.author, "roles"):
+            for r in message.author.roles:
+                if r.id in [1399784920968073316, 1501626692203184238, 1519700860010102895]:
+                    is_moderator = True
+                    break
+
         # 3. Check channel-specific reply cooldown (8 seconds)
         now = time.time()
         channel_id = message.channel.id
         last_reply = self.cooldowns.get(channel_id, 0)
-        if not is_owner:
+        if not is_moderator:
             if now - last_reply < 8:
                 return
 
