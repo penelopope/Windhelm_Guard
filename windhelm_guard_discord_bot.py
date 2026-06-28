@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 import sys
 import time
 import json
@@ -59,6 +60,19 @@ def load_env():
             print(f"Warning: Failed to load .env: {e}", file=sys.stderr)
 
 load_env()
+
+# ---------------------------------------------------------------------------
+# Filter / settings defaults (module‑level)
+# ---------------------------------------------------------------------------
+DEFAULT_NSFW_WORDS = [
+    "nsfw", "porn", "hentai", "xxx", "erotica", "sex",
+    "nudity", "lewd", "gore"
+]
+DEFAULT_FILTER_WORDS = [
+    "tranny", "faggot", "dyke", "shemale", "cunt", "nigger",
+    "chaser", "transphobic", "queerphobic"
+]
+SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
 
 class LLMKey:
     def __init__(self, provider, key, model=None):
@@ -590,6 +604,341 @@ class WindhelmGuardDiscordClient(discord.Client):
         self._ensure_file("channel_conflict_state.json", default={})
         self._ensure_file("friends.json", default=[])
         self._ensure_file("random_comment_state.json", default={"last_comment_time": 0.0})
+        # Ensure settings.json exists with AI judgment OFF by default
+        if not os.path.exists(SETTINGS_FILE):
+            self.save_settings({
+                "ai_judgment_enabled": False,
+                "nsfw_words": list(DEFAULT_NSFW_WORDS),
+                "filter_words": list(DEFAULT_FILTER_WORDS)
+            })
+
+    # ------------------------------------------------------------------
+    # Settings helpers
+    # ------------------------------------------------------------------
+    def load_settings(self):
+        """Load settings.json; create with defaults if missing."""
+        if not os.path.exists(SETTINGS_FILE):
+            default = {
+                "ai_judgment_enabled": False,
+                "nsfw_words": list(DEFAULT_NSFW_WORDS),
+                "filter_words": list(DEFAULT_FILTER_WORDS)
+            }
+            self.save_settings(default)
+            return default
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading settings.json: {e}", file=sys.stderr)
+            return {
+                "ai_judgment_enabled": False,
+                "nsfw_words": list(DEFAULT_NSFW_WORDS),
+                "filter_words": list(DEFAULT_FILTER_WORDS)
+            }
+
+    def save_settings(self, data):
+        """Persist settings to settings.json."""
+        try:
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Error saving settings.json: {e}", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Manual command helpers
+    # ------------------------------------------------------------------
+    def get_command_text(self, message, clean_text):
+        """Extract the command portion from a guard-prefixed or bot-mention message."""
+        prefixes = ("guard ", "moderator ", "bot ")
+        lower = clean_text.lower()
+        for pfx in prefixes:
+            if lower.startswith(pfx):
+                return clean_text[len(pfx):].strip()
+        if lower in ("guard", "moderator", "bot"):
+            return ""
+        if self.user in message.mentions:
+            # Strip the mention token and return the rest
+            stripped = clean_text
+            for mention_fmt in (f"<@{self.user.id}>", f"<@!{self.user.id}>"):
+                stripped = stripped.replace(mention_fmt, "").strip()
+            return stripped
+        return None  # not a command
+
+    async def handle_manual_commands(self, message, is_moderator):
+        """Parse guard/mention commands and execute them without touching the LLM.
+        Returns True if a command was handled (caller should return early)."""
+        clean_text = message.clean_content.strip()
+        cmd_text = self.get_command_text(message, clean_text)
+        if cmd_text is None:  # not addressed to the bot
+            return False
+
+        parts = cmd_text.split()
+        if not parts:
+            # bare mention / bare 'guard' with no sub-command — show help
+            parts = ["help"]
+        cmd = parts[0].lower()
+        args = parts[1:]
+        settings = self.load_settings()
+
+        # ---- AI toggle ------------------------------------------------
+        if cmd == "ai":
+            if not is_moderator:
+                await message.reply("Only moderators may change AI judgment settings.")
+                return True
+            if args and args[0].lower() == "on":
+                settings["ai_judgment_enabled"] = True
+                self.save_settings(settings)
+                await message.reply("✅ AI judgment **enabled**. The bot will now use LLM-based moderation.")
+            elif args and args[0].lower() == "off":
+                settings["ai_judgment_enabled"] = False
+                self.save_settings(settings)
+                await message.reply("🔕 AI judgment **disabled**. Word-filter mode is now active.")
+            else:
+                await message.reply("Usage: `guard ai <on|off>`")
+            return True
+
+        # ---- Filter word management -----------------------------------
+        if cmd == "add_filter":
+            if not is_moderator:
+                await message.reply("Only moderators may manage filter words.")
+                return True
+            if args:
+                word = args[0].lower()
+                if word not in settings["filter_words"]:
+                    settings["filter_words"].append(word)
+                    self.save_settings(settings)
+                    await message.reply(f"✅ Added `{word}` to the filter list.")
+                else:
+                    await message.reply(f"⚠️ `{word}` is already in the filter list.")
+            else:
+                await message.reply("Usage: `guard add_filter <word>`")
+            return True
+
+        if cmd == "remove_filter":
+            if not is_moderator:
+                await message.reply("Only moderators may manage filter words.")
+                return True
+            if args:
+                word = args[0].lower()
+                if word in settings["filter_words"]:
+                    settings["filter_words"].remove(word)
+                    self.save_settings(settings)
+                    await message.reply(f"✅ Removed `{word}` from the filter list.")
+                else:
+                    await message.reply(f"⚠️ `{word}` was not found in the filter list.")
+            else:
+                await message.reply("Usage: `guard remove_filter <word>`")
+            return True
+
+        if cmd == "list_filters":
+            if not is_moderator:
+                await message.reply("Only moderators may view the filter list.")
+                return True
+            words = settings["filter_words"]
+            body = ", ".join(f"`{w}`" for w in words) if words else "*(empty)*"
+            await message.reply(f"**Filter words:** {body}")
+            return True
+
+        # ---- NSFW word management ------------------------------------
+        if cmd == "add_nsfw":
+            if not is_moderator:
+                await message.reply("Only moderators may manage the NSFW list.")
+                return True
+            if args:
+                word = args[0].lower()
+                if word not in settings["nsfw_words"]:
+                    settings["nsfw_words"].append(word)
+                    self.save_settings(settings)
+                    await message.reply(f"✅ Added `{word}` to the NSFW list.")
+                else:
+                    await message.reply(f"⚠️ `{word}` is already in the NSFW list.")
+            else:
+                await message.reply("Usage: `guard add_nsfw <word>`")
+            return True
+
+        if cmd == "remove_nsfw":
+            if not is_moderator:
+                await message.reply("Only moderators may manage the NSFW list.")
+                return True
+            if args:
+                word = args[0].lower()
+                if word in settings["nsfw_words"]:
+                    settings["nsfw_words"].remove(word)
+                    self.save_settings(settings)
+                    await message.reply(f"✅ Removed `{word}` from the NSFW list.")
+                else:
+                    await message.reply(f"⚠️ `{word}` was not found in the NSFW list.")
+            else:
+                await message.reply("Usage: `guard remove_nsfw <word>`")
+            return True
+
+        if cmd == "list_nsfw":
+            if not is_moderator:
+                await message.reply("Only moderators may view the NSFW list.")
+                return True
+            words = settings["nsfw_words"]
+            body = ", ".join(f"`{w}`" for w in words) if words else "*(empty)*"
+            await message.reply(f"**NSFW words:** {body}")
+            return True
+
+        # ---- Reset to built-in defaults ------------------------------
+        if cmd == "init_defaults":
+            if not is_moderator:
+                await message.reply("Only moderators may reset the word lists.")
+                return True
+            settings["nsfw_words"] = list(DEFAULT_NSFW_WORDS)
+            settings["filter_words"] = list(DEFAULT_FILTER_WORDS)
+            self.save_settings(settings)
+            await message.reply("✅ Filter and NSFW word lists reset to built-in defaults.")
+            return True
+
+        # ---- Help command --------------------------------------------
+        if cmd == "help":
+            ai_state = "🟢 ON" if settings.get("ai_judgment_enabled") else "🔴 OFF"
+            help_text = (
+                f"**⚔️ Windhelm Guard — Command Reference**\n"
+                f"AI Judgment is currently: **{ai_state}**\n\n"
+                "**AI Control** *(moderators only)*\n"
+                "`guard ai on` — enable LLM-based moderation\n"
+                "`guard ai off` — disable LLM; use word-filter mode\n\n"
+                "**Filter Words** *(moderators only)*\n"
+                "`guard add_filter <word>` — add a word to the filter list\n"
+                "`guard remove_filter <word>` — remove a word from the filter list\n"
+                "`guard list_filters` — list all filter words\n\n"
+                "**NSFW Words** *(moderators only)*\n"
+                "`guard add_nsfw <word>` — add a word to the NSFW list\n"
+                "`guard remove_nsfw <word>` — remove a word from the NSFW list\n"
+                "`guard list_nsfw` — list all NSFW words\n\n"
+                "**Defaults** *(moderators only)*\n"
+                "`guard init_defaults` — restore built-in word lists\n\n"
+                "**Moderation** *(moderators only)*\n"
+                "`guard timeout <user> [mins] [reason]`\n"
+                "`guard untimeout <user>`\n"
+                "`guard kick <user> [reason]`\n"
+                "`guard ban <user> [reason]`\n"
+                "`guard unban <user>`\n"
+                "`guard clear [count]`\n"
+                "`guard lock` / `guard unlock`\n"
+                "`guard slowmode <seconds>`\n"
+                "`guard warn <user> [reason]`\n"
+                "`guard reset_toxicity <user>`"
+            )
+            await message.reply(help_text)
+            return True
+
+        # ---- Fallback: manual moderation commands -------------------
+        manual_mod_cmds = {
+            "timeout", "mute", "untimeout", "kick", "ban",
+            "unban", "clear", "lock", "unlock", "slowmode",
+            "warn", "reset_toxicity"
+        }
+        if cmd in manual_mod_cmds:
+            # Build a minimal result dict and pass it to the existing execute_command
+            target = args[0] if args else None
+            remaining = args[1:] if len(args) > 1 else []
+            cmd_args = {}
+            # Try to parse duration / reason from remaining tokens
+            for tok in remaining:
+                if tok.isdigit():
+                    if cmd in ("timeout", "mute"):
+                        cmd_args["duration_mins"] = int(tok)
+                    elif cmd == "slowmode":
+                        cmd_args["slowmode_seconds"] = int(tok)
+                    elif cmd == "clear":
+                        cmd_args["clear_limit"] = int(tok)
+                else:
+                    cmd_args["reason"] = cmd_args.get("reason", "") + tok + " "
+            if "reason" in cmd_args:
+                cmd_args["reason"] = cmd_args["reason"].strip()
+            result = {
+                "command_to_execute": cmd,
+                "command_target": target,
+                "command_args": cmd_args
+            }
+            await self.execute_command(message, result)
+            return True
+
+        # ---- Unknown command -----------------------------------------
+        return False
+
+    # ------------------------------------------------------------------
+    # Word-filter helpers
+    # ------------------------------------------------------------------
+    def check_message_filters(self, message):
+        """Check message text against NSFW and filter word lists.
+        Returns (violation_type, matched_word) or None if clean."""
+        settings = self.load_settings()
+        content = message.clean_content.lower()
+
+        # Determine if the channel allows NSFW
+        is_nsfw_channel = False
+        if hasattr(message.channel, "is_nsfw") and message.channel.is_nsfw:
+            is_nsfw_channel = True
+        elif hasattr(message.channel, "id") and message.channel.id in NSFW_ALLOWED_CHANNELS:
+            is_nsfw_channel = True
+
+        if not is_nsfw_channel:
+            for word in settings.get("nsfw_words", []):
+                pattern = r"\b" + re.escape(word.lower()) + r"\b"
+                if re.search(pattern, content):
+                    return ("nsfw", word)
+
+        for word in settings.get("filter_words", []):
+            pattern = r"\b" + re.escape(word.lower()) + r"\b"
+            if re.search(pattern, content):
+                return ("filter", word)
+
+        return None
+
+    async def log_filter_violation(self, message, violation_type, matched_word):
+        """Send a compact filter-violation alert to the mod channel."""
+        MOD_CHANNEL_ID = os.environ.get("MOD_CHANNEL_ID", "").strip()
+        if not MOD_CHANNEL_ID:
+            return
+        try:
+            embed = discord.Embed(
+                title="⚠️ Word Filter Violation",
+                color=discord.Color.orange(),
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            )
+            embed.add_field(
+                name="User",
+                value=f"{message.author.display_name} (<@{message.author.id}>)",
+                inline=True
+            )
+            embed.add_field(
+                name="Channel",
+                value=f"<#{message.channel.id}>",
+                inline=True
+            )
+            embed.add_field(name="Type", value=violation_type.upper(), inline=True)
+            embed.add_field(name="Matched Word", value=f"`{matched_word}`", inline=False)
+            embed.add_field(
+                name="Message Content",
+                value=message.clean_content[:500],
+                inline=False
+            )
+            embed.add_field(
+                name="Action",
+                value="Message deleted automatically.",
+                inline=False
+            )
+            channel = self.get_channel(int(MOD_CHANNEL_ID))
+            if channel:
+                await channel.send(embed=embed)
+        except Exception as e:
+            print(f"Error sending filter violation log: {e}", file=sys.stderr)
+
+    def gather_chat_data(self, message):
+        """Append a message line to convo_data.txt for future training context."""
+        convo_path = os.path.join(SCRIPT_DIR, "convo_data.txt")
+        try:
+            with open(convo_path, "a", encoding="utf-8") as f:
+                timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"[{timestamp}] [{message.author.display_name}]: {message.clean_content}\n")
+        except Exception as e:
+            print(f"Error writing to convo_data.txt: {e}", file=sys.stderr)
+
 
     async def generate_fun_comment(self, channel, history_str, style_guidelines, lingo):
         # Stub: fun comments disabled
@@ -1661,6 +2010,39 @@ IMAGE IN TARGET MESSAGE DESCRIPTION:
                 if r.id in [1399784920968073316, 1501626692203184238, 1519700860010102895]:
                     is_moderator = True
                     break
+
+        # ── Manual command interception (always active, no LLM needed) ───────
+        # Any message starting with a guard prefix or a direct bot mention may
+        # carry a manual command.  We handle those here and return early so the
+        # LLM is never invoked for command processing.
+        if is_mentioned or is_bot_alias:
+            if await self.handle_manual_commands(message, is_moderator):
+                return
+
+        # ── AI-off mode: word-filter + data gathering ──────────────────────
+        settings = self.load_settings()
+        if not settings.get("ai_judgment_enabled", False):
+            # Skip DM logging here — it's already handled above
+            if not is_dm:
+                violation = self.check_message_filters(message)
+                if violation:
+                    vtype, word = violation
+                    try:
+                        await message.delete()
+                    except Exception:
+                        pass
+                    try:
+                        await message.channel.send(
+                            f"{message.author.mention} Your message was removed because it "
+                            f"contained a prohibited {vtype} word."
+                        )
+                    except Exception:
+                        pass
+                    await self.log_filter_violation(message, vtype, word)
+                    return
+                # No violation — record for training data
+                self.gather_chat_data(message)
+            return  # AI judgment is disabled; do not call the LLM
 
         # 3. Check channel-specific reply cooldown (8 seconds)
         now = time.time()
