@@ -64,14 +64,8 @@ load_env()
 # ---------------------------------------------------------------------------
 # Filter / settings defaults (module‑level)
 # ---------------------------------------------------------------------------
-DEFAULT_NSFW_WORDS = [
-    "nsfw", "porn", "hentai", "xxx", "erotica", "sex",
-    "nudity", "lewd", "gore"
-]
-DEFAULT_FILTER_WORDS = [
-    "tranny", "faggot", "dyke", "shemale", "cunt", "nigger",
-    "chaser", "transphobic", "queerphobic"
-]
+DEFAULT_NSFW_WORDS = []
+DEFAULT_FILTER_WORDS = []
 SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
 
 class LLMKey:
