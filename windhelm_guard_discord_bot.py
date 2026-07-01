@@ -1523,8 +1523,59 @@ class WindhelmGuardDiscordClient(discord.Client):
             print(f"Error sending threshold mod summary: {e}", file=sys.stderr)
 
     async def on_message_delete(self, message):
-        # Deleted message logging disabled per user request
-        return
+        if message.author.bot:
+            return
+        if ALLOWED_GUILDS and message.guild and message.guild.id not in ALLOWED_GUILDS:
+            return
+
+        embed = discord.Embed(
+            title="🗑️ Message Deleted",
+            color=discord.Color.red(),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+        embed.add_field(
+            name="Author",
+            value=f"{message.author.mention} ({message.author.name} / ID: {message.author.id})",
+            inline=False
+        )
+        embed.add_field(
+            name="Channel",
+            value=message.channel.mention if hasattr(message.channel, "mention") else str(message.channel),
+            inline=True
+        )
+        content = message.content or message.clean_content or "[No text content]"
+        if message.attachments:
+            content += "\n" + "\n".join(f"[Attachment: {a.filename}]" for a in message.attachments)
+        embed.add_field(name="Content", value=content[:1024], inline=False)
+
+        # Try to figure out who deleted it via audit logs
+        deleter = "Unknown (possibly self-deleted)"
+        if message.guild:
+            try:
+                await asyncio.sleep(1)  # brief delay so audit log has time to register
+                async for entry in message.guild.audit_logs(
+                    limit=5, action=discord.AuditLogAction.message_delete
+                ):
+                    if (
+                        entry.target.id == message.author.id
+                        and entry.extra.channel.id == message.channel.id
+                        and (datetime.datetime.now(datetime.timezone.utc) - entry.created_at).total_seconds() < 10
+                    ):
+                        deleter = f"{entry.user.mention} ({entry.user.name} / ID: {entry.user.id})"
+                        break
+            except Exception:
+                pass
+
+        embed.add_field(name="Deleted By", value=deleter, inline=True)
+        embed.set_footer(text=f"Message ID: {message.id}")
+
+        DashboardLogger.log_event("MESSAGE_DELETE", {
+            "author": f"{message.author.name} ({message.author.id})",
+            "channel": str(message.channel),
+            "content": content[:500],
+            "deleted_by": deleter
+        })
+        await self.log_to_server_log_channel(embed)
 
     # async def on_message_edit(self, before, after):
     #     if before.author.bot:
@@ -1558,35 +1609,59 @@ class WindhelmGuardDiscordClient(discord.Client):
             return
         if after.bot:
             return
-        embed = discord.Embed(
-            title="👤 Member Updated",
-            color=discord.Color.teal(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        embed.add_field(name="Member", value=f"{after.mention} ({after.id})", inline=False)
-        
-        changed = False
-            
+
+        # --- Role changes ---
         if before.roles != after.roles:
             old_role_names = [r.name for r in before.roles]
             new_role_names = [r.name for r in after.roles]
             added_roles = list(set(new_role_names) - set(old_role_names))
             removed_roles = list(set(old_role_names) - set(new_role_names))
-            
-            if added_roles:
-                embed.add_field(name="Roles Added", value=", ".join(added_roles), inline=False)
-                changed = True
-            if removed_roles:
-                embed.add_field(name="Roles Removed", value=", ".join(removed_roles), inline=False)
-                changed = True
 
+            if added_roles or removed_roles:
+                # Try to find who made the change
+                changer = "Unknown"
+                try:
+                    async for entry in before.guild.audit_logs(limit=5, action=discord.AuditLogAction.member_role_update):
+                        if entry.target.id == after.id and (datetime.datetime.now(datetime.timezone.utc) - entry.created_at).total_seconds() < 10:
+                            changer = f"{entry.user.mention} ({entry.user.name} / ID: {entry.user.id})"
+                            break
+                except Exception:
+                    pass
+
+                embed = discord.Embed(
+                    title="🎭 Member Roles Updated",
+                    color=discord.Color.teal(),
+                    timestamp=datetime.datetime.now(datetime.timezone.utc)
+                )
+                embed.add_field(name="Member", value=f"{after.mention} ({after.name} / ID: {after.id})", inline=False)
+                embed.add_field(name="Changed By", value=changer, inline=False)
+                if added_roles:
+                    embed.add_field(name="✅ Roles Added", value=", ".join(added_roles), inline=True)
+                if removed_roles:
+                    embed.add_field(name="❌ Roles Removed", value=", ".join(removed_roles), inline=True)
+
+                DashboardLogger.log_event("ROLE_UPDATE", {
+                    "member": f"{after.name} ({after.id})",
+                    "added": added_roles,
+                    "removed": removed_roles,
+                    "changed_by": changer
+                })
+                await self.log_to_server_log_channel(embed)
+
+        # --- Timeout changes ---
         if getattr(before, "communication_disabled_until", None) != getattr(after, "communication_disabled_until", None):
+            embed = discord.Embed(
+                color=discord.Color.orange(),
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            )
+            embed.add_field(name="Member", value=f"{after.mention} ({after.name} / ID: {after.id})", inline=False)
+
             if after.communication_disabled_until:
                 duration_secs = (after.communication_disabled_until - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
                 duration_mins = max(1, int(duration_secs // 60))
-                embed.add_field(name="Action", value="🔇 Timed Out (Muted)", inline=False)
+                embed.title = "🔇 Member Timed Out"
                 embed.add_field(name="Duration", value=f"{duration_mins} minutes", inline=True)
-                
+
                 moderator = "Unknown"
                 reason = "No reason provided"
                 try:
@@ -1598,22 +1673,36 @@ class WindhelmGuardDiscordClient(discord.Client):
                             break
                 except Exception:
                     pass
-                embed.add_field(name="Moderator", value=moderator, inline=True)
+                embed.add_field(name="Timed Out By", value=moderator, inline=True)
                 embed.add_field(name="Reason", value=reason, inline=True)
+
+                DashboardLogger.log_event("MEMBER_TIMEOUT", {
+                    "member": f"{after.name} ({after.id})",
+                    "duration_mins": duration_mins,
+                    "moderator": moderator,
+                    "reason": reason
+                })
             else:
-                embed.add_field(name="Action", value="🔊 Timeout Removed", inline=False)
+                embed.title = "🔊 Timeout Removed"
                 moderator = "Unknown"
                 try:
                     async for entry in before.guild.audit_logs(limit=5, action=discord.AuditLogAction.member_update):
-                        if entry.target.id == after.id and getattr(entry.before, "communication_disabled_until", None) is not None and getattr(entry.after, "communication_disabled_until", None) is None:
+                        if (
+                            entry.target.id == after.id
+                            and getattr(entry.before, "communication_disabled_until", None) is not None
+                            and getattr(entry.after, "communication_disabled_until", None) is None
+                        ):
                             moderator = f"{entry.user.mention} ({entry.user.name} / ID: {entry.user.id})"
                             break
                 except Exception:
                     pass
-                embed.add_field(name="Moderator", value=moderator, inline=True)
-            changed = True
+                embed.add_field(name="Removed By", value=moderator, inline=True)
 
-        if changed:
+                DashboardLogger.log_event("TIMEOUT_REMOVED", {
+                    "member": f"{after.name} ({after.id})",
+                    "removed_by": moderator
+                })
+
             await self.log_to_server_log_channel(embed)
 
     async def track_invite_used(self, member):
@@ -1648,27 +1737,61 @@ class WindhelmGuardDiscordClient(discord.Client):
             return
         if member.bot:
             return
-        
-        # Track invites internally
-        await self.track_invite_used(member)
-        # Join logs disabled per user request
+
+        # Track which invite was used
+        inviter, used_invite = await self.track_invite_used(member)
+
+        embed = discord.Embed(
+            title="✅ Member Joined",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+        embed.set_thumbnail(url=member.display_avatar.url if member.avatar else None)
+        embed.add_field(
+            name="Member",
+            value=f"{member.mention} ({member.name} / ID: {member.id})",
+            inline=False
+        )
+        account_age = datetime.datetime.now(datetime.timezone.utc) - member.created_at
+        embed.add_field(name="Account Age", value=f"{account_age.days} days", inline=True)
+        embed.add_field(name="Member Count", value=str(member.guild.member_count), inline=True)
+
+        if used_invite:
+            embed.add_field(
+                name="Joined Via Invite",
+                value=f"`discord.gg/{used_invite.code}`",
+                inline=True
+            )
+        if inviter:
+            embed.add_field(
+                name="Invite Created By",
+                value=f"{inviter.mention} ({inviter.name} / ID: {inviter.id})",
+                inline=True
+            )
+
+        DashboardLogger.log_event("MEMBER_JOIN", {
+            "member": f"{member.name} ({member.id})",
+            "invite_code": used_invite.code if used_invite else "Unknown",
+            "invited_by": f"{inviter.name} ({inviter.id})" if inviter else "Unknown"
+        })
+        await self.log_to_server_log_channel(embed)
 
     async def on_member_remove(self, member):
         if ALLOWED_GUILDS and member.guild.id not in ALLOWED_GUILDS:
             return
         if member.bot:
             return
-        
-        # Check if it was a kick
+
+        # Check audit logs: kick, ban (ban fires its own event but may arrive here first)
         is_kick = False
         kicker = "Unknown"
         reason = "No reason provided"
         try:
-            # Look back in audit logs for a kick
+            await asyncio.sleep(1)  # brief delay so audit log has time to register
             async for entry in member.guild.audit_logs(limit=5, action=discord.AuditLogAction.kick):
                 if entry.target.id == member.id:
                     now = datetime.datetime.now(datetime.timezone.utc)
-                    if (now - entry.created_at).total_seconds() < 10:
+                    if (now - entry.created_at).total_seconds() < 15:
                         is_kick = True
                         kicker = f"{entry.user.mention} ({entry.user.name} / ID: {entry.user.id})"
                         if entry.reason:
@@ -1676,22 +1799,47 @@ class WindhelmGuardDiscordClient(discord.Client):
                         break
         except Exception:
             pass
-            
-        if not is_kick:
-            # Only log kicks per user request
-            return
-            
-        embed = discord.Embed(
-            title="👢 Member Kicked",
-            color=discord.Color.orange(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
-        )
-        embed.set_thumbnail(url=member.display_avatar.url if member.avatar else None)
-        embed.add_field(name="User", value=f"{member.mention} ({member.name} / ID: {member.id})", inline=False)
-        embed.add_field(name="Kicked By", value=kicker, inline=True)
-        embed.add_field(name="Reason", value=reason, inline=True)
-        
-        await self.log_to_server_log_channel(embed)
+
+        if is_kick:
+            embed = discord.Embed(
+                title="👢 Member Kicked",
+                color=discord.Color.orange(),
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            )
+            embed.set_thumbnail(url=member.display_avatar.url if member.avatar else None)
+            embed.add_field(name="User", value=f"{member.mention} ({member.name} / ID: {member.id})", inline=False)
+            embed.add_field(name="Kicked By", value=kicker, inline=True)
+            embed.add_field(name="Reason", value=reason, inline=True)
+            DashboardLogger.log_event("MEMBER_KICK", {
+                "member": f"{member.name} ({member.id})",
+                "kicked_by": kicker,
+                "reason": reason
+            })
+            await self.log_to_server_log_channel(embed)
+        else:
+            # Regular leave
+            roles = [r.name for r in member.roles if r.name != "@everyone"]
+            embed = discord.Embed(
+                title="👋 Member Left",
+                color=discord.Color.greyple(),
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            )
+            embed.set_thumbnail(url=member.display_avatar.url if member.avatar else None)
+            embed.add_field(
+                name="Member",
+                value=f"{member.mention} ({member.name} / ID: {member.id})",
+                inline=False
+            )
+            embed.add_field(
+                name="Roles Held",
+                value=", ".join(roles) if roles else "None",
+                inline=False
+            )
+            DashboardLogger.log_event("MEMBER_LEAVE", {
+                "member": f"{member.name} ({member.id})",
+                "roles": roles
+            })
+            await self.log_to_server_log_channel(embed)
 
     async def on_member_ban(self, guild, user):
         if ALLOWED_GUILDS and guild.id not in ALLOWED_GUILDS:
@@ -1754,26 +1902,88 @@ class WindhelmGuardDiscordClient(discord.Client):
             return
         if invite.inviter and invite.inviter.bot:
             return
-            
+
+        # Refresh invite cache
         guild_id = invite.guild.id
         if guild_id in self.invites:
             try:
                 self.invites[guild_id] = await invite.guild.invites()
             except Exception as e:
                 print(f"Failed to refresh invites cache on invite create: {e}")
-        # Invite log disabled per user request
+
+        # Build log embed
+        inviter = invite.inviter
+        inviter_str = f"{inviter.mention} ({inviter.name} / ID: {inviter.id})" if inviter else "Unknown"
+        max_uses = str(invite.max_uses) if invite.max_uses else "Unlimited"
+        max_age_secs = invite.max_age
+        if max_age_secs:
+            hrs, remainder = divmod(max_age_secs, 3600)
+            mins = remainder // 60
+            expires_str = (f"{hrs}h " if hrs else "") + (f"{mins}m" if mins else "never")
+        else:
+            expires_str = "Never"
+        channel_str = invite.channel.mention if invite.channel else "Unknown"
+
+        embed = discord.Embed(
+            title="🔗 Invite Link Created",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+        embed.add_field(name="Created By", value=inviter_str, inline=False)
+        embed.add_field(name="Invite Code", value=f"`discord.gg/{invite.code}`", inline=True)
+        embed.add_field(name="Channel", value=channel_str, inline=True)
+        embed.add_field(name="Max Uses", value=max_uses, inline=True)
+        embed.add_field(name="Expires In", value=expires_str, inline=True)
+        embed.add_field(name="Temporary Membership", value="Yes" if invite.temporary else "No", inline=True)
+
+        DashboardLogger.log_event("INVITE_CREATE", {
+            "code": invite.code,
+            "created_by": f"{inviter.name} ({inviter.id})" if inviter else "Unknown",
+            "channel": str(invite.channel),
+            "max_uses": max_uses,
+            "expires_in": expires_str
+        })
+        await self.log_to_server_log_channel(embed)
 
     async def on_invite_delete(self, invite):
         if ALLOWED_GUILDS and invite.guild.id not in ALLOWED_GUILDS:
             return
-            
+
+        # Try to find who owned the invite before refreshing cache
+        old_invite = None
         guild_id = invite.guild.id
+        if guild_id in self.invites:
+            for cached_inv in self.invites[guild_id]:
+                if cached_inv.code == invite.code:
+                    old_invite = cached_inv
+                    break
+
+        # Refresh cache
         if guild_id in self.invites:
             try:
                 self.invites[guild_id] = await invite.guild.invites()
             except Exception as e:
                 print(f"Failed to refresh invites cache on invite delete: {e}")
-        # Invite log disabled per user request
+
+        inviter = getattr(old_invite, "inviter", None) or getattr(invite, "inviter", None)
+        inviter_str = f"{inviter.mention} ({inviter.name} / ID: {inviter.id})" if inviter else "Unknown"
+        uses = getattr(old_invite, "uses", getattr(invite, "uses", "?"))
+
+        embed = discord.Embed(
+            title="❌ Invite Link Deleted",
+            color=discord.Color.dark_red(),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+        embed.add_field(name="Invite Code", value=f"`discord.gg/{invite.code}`", inline=True)
+        embed.add_field(name="Originally Created By", value=inviter_str, inline=False)
+        embed.add_field(name="Total Uses Before Deletion", value=str(uses), inline=True)
+
+        DashboardLogger.log_event("INVITE_DELETE", {
+            "code": invite.code,
+            "created_by": f"{inviter.name} ({inviter.id})" if inviter else "Unknown",
+            "uses": str(uses)
+        })
+        await self.log_to_server_log_channel(embed)
 
     async def analyze_channel_style(self, channel):
         if isinstance(channel, discord.DMChannel):
